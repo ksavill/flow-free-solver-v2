@@ -14,6 +14,7 @@ import {
   Typography
 } from "@mui/material";
 import { graphFromText, parsePuzzle, savePuzzle, solvePuzzle, ParseResponse, SolveResponse } from "../api";
+import { GameView } from "../components/GameView";
 import { GraphPlotly } from "../components/GraphPlotly";
 import { GraphPreview } from "../components/GraphPreview";
 
@@ -56,7 +57,7 @@ export function SolveView({
   const [metaDifficulty, setMetaDifficulty] = useState("");
   const [metaTags, setMetaTags] = useState("");
   const [metaNotes, setMetaNotes] = useState("");
-  const [usePlotly, setUsePlotly] = useState(false);
+  const [viewMode, setViewMode] = useState<"game" | "graph" | "plotly">("game");
   const [use3d, setUse3d] = useState(false);
   const [showSolutionOverlay, setShowSolutionOverlay] = useState(false);
   const graphAbortRef = useRef<AbortController | null>(null);
@@ -215,11 +216,19 @@ export function SolveView({
                   control={<Switch checked={fillAll} onChange={(event) => setFillAll(event.target.checked)} />}
                   label="Fill all tiles"
                 />
-                <FormControlLabel
-                  control={<Switch checked={usePlotly} onChange={(event) => setUsePlotly(event.target.checked)} />}
-                  label="Plotly view"
-                />
-                {usePlotly && (
+                <TextField
+                  label="View"
+                  select
+                  value={viewMode}
+                  onChange={(event) => setViewMode(event.target.value as "game" | "graph" | "plotly")}
+                  size="small"
+                  sx={{ minWidth: 120 }}
+                >
+                  <MenuItem value="game">Game</MenuItem>
+                  <MenuItem value="graph">Graph</MenuItem>
+                  <MenuItem value="plotly">Plotly</MenuItem>
+                </TextField>
+                {viewMode === "plotly" && (
                   <FormControlLabel
                     control={<Switch checked={use3d} onChange={(event) => setUse3d(event.target.checked)} />}
                     label="3D"
@@ -322,7 +331,14 @@ export function SolveView({
                 Graph preview
               </Typography>
               {graphResult ? (
-                usePlotly ? (
+                viewMode === "game" ? (
+                  <GameView
+                    graph={graphResult}
+                    nodeColor={solveResult?.node_color}
+                    showSolution={showSolutionOverlay}
+                    height={320}
+                  />
+                ) : viewMode === "plotly" ? (
                   <GraphPlotly
                     graph={graphResult}
                     use3d={use3d}
