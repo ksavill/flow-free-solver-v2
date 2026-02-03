@@ -1,0 +1,421 @@
+export type PuzzleEntry = {
+  name: string;
+  source: string;
+  rel_path: string;
+  kind: string;
+  type_label: string;
+  size_label: string;
+  metrics: Record<string, number>;
+  nodes: number | null;
+  edges: number | null;
+  tiles: number | null;
+  colors: number | null;
+  meta: Record<string, string>;
+  error: string | null;
+  mtime: number | null;
+};
+
+export type ParseResponse = {
+  kind: string;
+  type_label: string;
+  size_label: string;
+  metrics: Record<string, number>;
+  counts: Record<string, number | boolean>;
+  meta: Record<string, string>;
+  terminals: Record<string, string[]>;
+};
+
+export type SolveResponse = {
+  node_color: Record<string, string | null>;
+  paths: Record<string, string[]>;
+  graph: {
+    nodes: Array<{
+      id: string;
+      x: number;
+      y: number;
+      z: number;
+      kind: string;
+      data: Record<string, unknown>;
+    }>;
+    edges: Array<[string, string]>;
+    terminals: Record<string, [string, string]>;
+    tiles: Record<string, string[]>;
+  };
+};
+
+export type GraphResponse = {
+  graph: SolveResponse["graph"];
+};
+
+export type ImageCropResponse = {
+  crop: { x: number; y: number; width: number; height: number } | null;
+  image_size: { width: number; height: number };
+  message?: string;
+};
+
+export type ImageGridResponse = {
+  grid: { rows: number; cols: number; vertical_lines: number; horizontal_lines: number } | null;
+  image_size: { width: number; height: number };
+  message?: string;
+  perspective?: Record<string, unknown> | null;
+};
+
+export type ImageTerminalsResponse = {
+  terminals: Array<{ row: number; col: number; letter: string; color: number[] }>;
+  info: { clusters: Array<{ color: number[]; count: number }>; candidates: number; warnings: string[] };
+  perspective?: Record<string, unknown> | null;
+};
+
+export type ImageGenerateResponse = {
+  name: string;
+  text: string;
+  metadata: Record<string, string>;
+  detection: Record<string, unknown>;
+};
+
+export type CropTemplate = {
+  id: string;
+  name: string;
+  image_width: number;
+  image_height: number;
+  crop: { x: number; y: number; width: number; height: number };
+  crop_pct: { x: number; y: number; width: number; height: number };
+  note?: string;
+  created_at?: number;
+  has_preview?: boolean;
+  pipeline?: {
+    ocr?: boolean;
+    grid?: boolean;
+    terminals?: boolean;
+    ocr_full?: boolean;
+  };
+};
+
+export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+
+function encodePath(path: string) {
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {})
+    },
+    ...init
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    const message = (detail as { detail?: string }).detail ?? res.statusText;
+    throw new Error(message);
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function listPuzzles(): Promise<PuzzleEntry[]> {
+  const data = await apiRequest<{ entries: PuzzleEntry[] }>("/puzzles");
+  return data.entries;
+}
+
+export async function getPuzzle(source: string, name: string): Promise<{ name: string; text: string }> {
+  return apiRequest<{ name: string; text: string }>(`/puzzles/${source}/${encodePath(name)}`);
+}
+
+export async function getPuzzleGraph(source: string, name: string): Promise<GraphResponse> {
+  return apiRequest<GraphResponse>(`/puzzles/${source}/${encodePath(name)}/graph`);
+}
+
+export async function parsePuzzle(payload: { name: string; text: string; fill?: boolean }): Promise<ParseResponse> {
+  return apiRequest<ParseResponse>("/parse", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function graphFromText(
+  payload: { name: string; text: string; fill?: boolean },
+  signal?: AbortSignal
+): Promise<GraphResponse> {
+  return apiRequest<GraphResponse>("/graph", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    signal
+  });
+}
+
+export async function solvePuzzle(payload: {
+  name: string;
+  text: string;
+  fill?: boolean;
+  solver?: string;
+  timeout_ms?: number;
+}): Promise<SolveResponse> {
+  return apiRequest<SolveResponse>("/solve", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function savePuzzle(payload: {
+  name: string;
+  text: string;
+  overwrite?: boolean;
+  drop_empty?: boolean;
+  metadata?: Record<string, string>;
+}): Promise<{ path: string; text?: string }> {
+  return apiRequest<{ path: string; text?: string }>("/puzzles/save", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function renamePuzzle(payload: {
+  source: string;
+  old_name: string;
+  new_name: string;
+}): Promise<{ old_path: string; new_path: string }> {
+  return apiRequest<{ old_path: string; new_path: string }>("/puzzles/rename", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deletePuzzle(source: string, name: string): Promise<{ deleted: boolean; path: string }> {
+  const res = await fetch(`${API_URL}/puzzles/${source}/${encodePath(name)}`, { method: "DELETE" });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    const message = (detail as { detail?: string }).detail ?? res.statusText;
+    throw new Error(message);
+  }
+  return res.json() as Promise<{ deleted: boolean; path: string }>;
+}
+
+async function imageRequest<T>(path: string, formData: FormData): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    body: formData
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    const message = (detail as { detail?: string }).detail ?? res.statusText;
+    throw new Error(message);
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function imageAutoCrop(params: {
+  file: File;
+  threshold: number;
+  invert: boolean;
+  padding: number;
+}): Promise<ImageCropResponse> {
+  const form = new FormData();
+  form.append("file", params.file);
+  form.append("threshold", String(params.threshold));
+  form.append("invert", String(params.invert));
+  form.append("padding", String(params.padding));
+  return imageRequest<ImageCropResponse>("/image/crop/auto", form);
+}
+
+export async function imageDetectGrid(params: {
+  file: File;
+  threshold: number;
+  lineThreshold: number;
+  invert: boolean;
+  perspective?: boolean;
+  crop?: { x: number; y: number; width: number; height: number } | null;
+}): Promise<ImageGridResponse> {
+  const form = new FormData();
+  form.append("file", params.file);
+  form.append("threshold", String(params.threshold));
+  form.append("line_threshold", String(params.lineThreshold));
+  form.append("invert", String(params.invert));
+  if (params.perspective !== undefined) {
+    form.append("perspective", String(params.perspective));
+  }
+  if (params.crop) {
+    form.append("crop_x", String(params.crop.x));
+    form.append("crop_y", String(params.crop.y));
+    form.append("crop_width", String(params.crop.width));
+    form.append("crop_height", String(params.crop.height));
+  }
+  return imageRequest<ImageGridResponse>("/image/grid/detect", form);
+}
+
+export async function imageDetectTerminals(params: {
+  file: File;
+  rows: number;
+  cols: number;
+  satThreshold: number;
+  brightnessMin: number;
+  brightnessMax: number;
+  marginRatio: number;
+  clusterThreshold: number;
+  bgThreshold: number;
+  perspective?: boolean;
+  crop?: { x: number; y: number; width: number; height: number } | null;
+}): Promise<ImageTerminalsResponse> {
+  const form = new FormData();
+  form.append("file", params.file);
+  form.append("rows", String(params.rows));
+  form.append("cols", String(params.cols));
+  form.append("sat_threshold", String(params.satThreshold));
+  form.append("brightness_min", String(params.brightnessMin));
+  form.append("brightness_max", String(params.brightnessMax));
+  form.append("margin_ratio", String(params.marginRatio));
+  form.append("cluster_threshold", String(params.clusterThreshold));
+  form.append("bg_threshold", String(params.bgThreshold));
+  if (params.perspective !== undefined) {
+    form.append("perspective", String(params.perspective));
+  }
+  if (params.crop) {
+    form.append("crop_x", String(params.crop.x));
+    form.append("crop_y", String(params.crop.y));
+    form.append("crop_width", String(params.crop.width));
+    form.append("crop_height", String(params.crop.height));
+  }
+  return imageRequest<ImageTerminalsResponse>("/image/terminals/detect", form);
+}
+
+export async function imageGenerate(params: {
+  file: File;
+  targetType: string;
+  gridWidth?: number;
+  gridHeight?: number;
+  graphLayout?: string;
+  graphNodes?: number;
+  autoTerminals?: boolean;
+  metadata?: Record<string, string>;
+  crop?: { x: number; y: number; width: number; height: number } | null;
+  threshold?: number;
+  lineThreshold?: number;
+  invert?: boolean;
+  perspective?: boolean;
+  satThreshold?: number;
+  brightnessMin?: number;
+  brightnessMax?: number;
+  marginRatio?: number;
+  clusterThreshold?: number;
+  bgThreshold?: number;
+}): Promise<ImageGenerateResponse> {
+  const form = new FormData();
+  form.append("file", params.file);
+  form.append("target_type", params.targetType);
+  if (params.gridWidth !== undefined) {
+    form.append("grid_width", String(params.gridWidth));
+  }
+  if (params.gridHeight !== undefined) {
+    form.append("grid_height", String(params.gridHeight));
+  }
+  if (params.graphLayout) {
+    form.append("graph_layout", params.graphLayout);
+  }
+  if (params.graphNodes !== undefined) {
+    form.append("graph_nodes", String(params.graphNodes));
+  }
+  if (params.autoTerminals !== undefined) {
+    form.append("auto_terminals", String(params.autoTerminals));
+  }
+  if (params.metadata) {
+    form.append("metadata_json", JSON.stringify(params.metadata));
+  }
+  if (params.crop) {
+    form.append("crop_x", String(params.crop.x));
+    form.append("crop_y", String(params.crop.y));
+    form.append("crop_width", String(params.crop.width));
+    form.append("crop_height", String(params.crop.height));
+  }
+  if (params.threshold !== undefined) {
+    form.append("threshold", String(params.threshold));
+  }
+  if (params.lineThreshold !== undefined) {
+    form.append("line_threshold", String(params.lineThreshold));
+  }
+  if (params.invert !== undefined) {
+    form.append("invert", String(params.invert));
+  }
+  if (params.perspective !== undefined) {
+    form.append("perspective", String(params.perspective));
+  }
+  if (params.satThreshold !== undefined) {
+    form.append("sat_threshold", String(params.satThreshold));
+  }
+  if (params.brightnessMin !== undefined) {
+    form.append("brightness_min", String(params.brightnessMin));
+  }
+  if (params.brightnessMax !== undefined) {
+    form.append("brightness_max", String(params.brightnessMax));
+  }
+  if (params.marginRatio !== undefined) {
+    form.append("margin_ratio", String(params.marginRatio));
+  }
+  if (params.clusterThreshold !== undefined) {
+    form.append("cluster_threshold", String(params.clusterThreshold));
+  }
+  if (params.bgThreshold !== undefined) {
+    form.append("bg_threshold", String(params.bgThreshold));
+  }
+  return imageRequest<ImageGenerateResponse>("/image/generate", form);
+}
+
+export async function imageOcr(params: {
+  file: File;
+  crop?: { x: number; y: number; width: number; height: number } | null;
+  perspective?: boolean;
+}): Promise<{ text: string; suggested_name?: string; message?: string }> {
+  const form = new FormData();
+  form.append("file", params.file);
+  if (params.perspective !== undefined) {
+    form.append("perspective", String(params.perspective));
+  }
+  if (params.crop) {
+    form.append("crop_x", String(params.crop.x));
+    form.append("crop_y", String(params.crop.y));
+    form.append("crop_width", String(params.crop.width));
+    form.append("crop_height", String(params.crop.height));
+  }
+  return imageRequest<{ text: string; suggested_name?: string; message?: string }>("/image/ocr", form);
+}
+
+export async function listCropTemplates(): Promise<CropTemplate[]> {
+  const data = await apiRequest<{ templates: CropTemplate[] }>("/templates/crop");
+  return data.templates;
+}
+
+export async function saveCropTemplate(payload: {
+  name: string;
+  image_width: number;
+  image_height: number;
+  crop: { x: number; y: number; width: number; height: number };
+  note?: string;
+  preview_png_base64?: string;
+  pipeline?: {
+    ocr?: boolean;
+    grid?: boolean;
+    terminals?: boolean;
+    ocr_full?: boolean;
+  };
+}): Promise<{ id: string }> {
+  return apiRequest<{ id: string }>("/templates/crop", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function cropTemplatePreviewUrl(templateId: string) {
+  return `${API_URL}/templates/crop/${encodeURIComponent(templateId)}/preview`;
+}
+
+export async function deleteCropTemplate(templateId: string): Promise<{ deleted: boolean }> {
+  const res = await fetch(`${API_URL}/templates/crop/${encodeURIComponent(templateId)}`, { method: "DELETE" });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    const message = (detail as { detail?: string }).detail ?? res.statusText;
+    throw new Error(message);
+  }
+  return res.json() as Promise<{ deleted: boolean }>;
+}

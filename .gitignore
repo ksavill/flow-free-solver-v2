@@ -1,0 +1,14 @@
+.venv/
+.uv-cache/
+__pycache__/
+*.pyc
+out/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.env*
+.streamlit/
+node_modules/
+
+
+

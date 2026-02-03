@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.24.2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flow-solver-v2"
+version = "0.1.0"
+description = "Offline Flow/Numberlink solver + visualizer (graph-first; supports bridges/holes)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110.0",
+  "numpy>=1.26.0,<2.4.0",
+  "opencv-python-headless>=4.9.0.80",
+  "pytesseract>=0.3.10",
+  "python-multipart>=0.0.9",
+  "networkx>=3.2.1",
+  "Pillow>=10.3.0",
+  "plotly>=5.19.0",
+  "uvicorn[standard]>=0.29.0",
+  "z3-solver>=4.12.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["flow_solver"]
+
+
+
