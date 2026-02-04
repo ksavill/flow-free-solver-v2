@@ -329,6 +329,62 @@ def _color_distance(a: Tuple[float, float, float], b: Tuple[float, float, float]
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
 
 
+def _mean_color(pixels: List[Tuple[int, int, int]]) -> Tuple[float, float, float]:
+    if not pixels:
+        return (0.0, 0.0, 0.0)
+    r = sum(p[0] for p in pixels) / len(pixels)
+    g = sum(p[1] for p in pixels) / len(pixels)
+    b = sum(p[2] for p in pixels) / len(pixels)
+    return (r, g, b)
+
+
+def _sample_region_color(
+    region: Image.Image,
+    *,
+    sample_max_dim: int = 24,
+) -> Tuple[Tuple[float, float, float], float, float]:
+    sample = region
+    if sample.width > sample_max_dim or sample.height > sample_max_dim:
+        scale = min(sample_max_dim / sample.width, sample_max_dim / sample.height)
+        sample = sample.resize(
+            (max(1, int(sample.width * scale)), max(1, int(sample.height * scale))),
+            Image.BILINEAR,
+        )
+    pixels = list(sample.getdata())
+    if not pixels:
+        return (0.0, 0.0, 0.0), 0.0, 0.0
+
+    def score(pixel: Tuple[int, int, int]) -> float:
+        return _saturation(pixel) + _brightness(pixel) * 0.2
+
+    pixels.sort(key=score, reverse=True)
+    top_n = max(6, int(len(pixels) * 0.2))
+    selected = pixels[:top_n]
+    color = _mean_color(selected)
+    return color, _saturation(color), _brightness(color)
+
+
+def _cluster_candidates(candidates: List[TerminalCandidate], threshold: float) -> List[Dict[str, Any]]:
+    clusters: List[Dict[str, Any]] = []
+    for cand in candidates:
+        assigned = False
+        for cluster in clusters:
+            if _color_distance(cand.color, cluster["color"]) <= threshold:
+                members = cluster["members"]
+                members.append(cand)
+                count = len(members)
+                cluster["color"] = (
+                    (cluster["color"][0] * (count - 1) + cand.color[0]) / count,
+                    (cluster["color"][1] * (count - 1) + cand.color[1]) / count,
+                    (cluster["color"][2] * (count - 1) + cand.color[2]) / count,
+                )
+                assigned = True
+                break
+        if not assigned:
+            clusters.append({"color": cand.color, "members": [cand]})
+    return clusters
+
+
 def detect_terminals(
     image: Image.Image,
     *,
@@ -364,6 +420,10 @@ def detect_terminals(
         (border_stat.mean[1] + border_stat2.mean[1] + border_stat3.mean[1] + border_stat4.mean[1]) / 4.0,
         (border_stat.mean[2] + border_stat2.mean[2] + border_stat3.mean[2] + border_stat4.mean[2]) / 4.0,
     )
+    bg_brightness = _brightness(bg_color)
+    neutral_brightness_min = max(brightness_min, bg_brightness + 25.0, 140.0)
+    neutral_brightness_max = max(brightness_max, 250.0)
+    neutral_dist = max(bg_threshold * 1.5, bg_threshold + 20.0)
 
     candidates: List[TerminalCandidate] = []
     for row in range(rows):
@@ -376,34 +436,35 @@ def detect_terminals(
                 continue
 
             region = image.crop((x0, y0, x1, y1))
-            stat = ImageStat.Stat(region)
-            mean = stat.mean[:3]
-            color = (float(mean[0]), float(mean[1]), float(mean[2]))
-            sat = _saturation(color)
-            bright = _brightness(color)
+            color, sat, bright = _sample_region_color(region)
             dist_bg = _color_distance(color, bg_color)
-            if sat >= sat_threshold and brightness_min <= bright <= brightness_max and dist_bg >= bg_threshold:
+            is_colorful = sat >= sat_threshold and brightness_min <= bright <= brightness_max and dist_bg >= bg_threshold
+            is_neutral = (
+                sat < sat_threshold
+                and bright >= neutral_brightness_min
+                and bright <= neutral_brightness_max
+                and bright >= bg_brightness + 35.0
+                and dist_bg >= neutral_dist
+            )
+            if is_colorful or is_neutral:
                 candidates.append(
                     TerminalCandidate(row=row, col=col, color=color, saturation=sat, brightness=bright)
                 )
 
-    clusters: List[Dict[str, Any]] = []
-    for cand in candidates:
-        assigned = False
+    clusters = _cluster_candidates(candidates, cluster_threshold)
+    if clusters:
+        refined: List[Dict[str, Any]] = []
+        split_threshold = max(12.0, cluster_threshold * 0.6)
         for cluster in clusters:
-            if _color_distance(cand.color, cluster["color"]) <= cluster_threshold:
-                members = cluster["members"]
-                members.append(cand)
-                count = len(members)
-                cluster["color"] = (
-                    (cluster["color"][0] * (count - 1) + cand.color[0]) / count,
-                    (cluster["color"][1] * (count - 1) + cand.color[1]) / count,
-                    (cluster["color"][2] * (count - 1) + cand.color[2]) / count,
-                )
-                assigned = True
-                break
-        if not assigned:
-            clusters.append({"color": cand.color, "members": [cand]})
+            if len(cluster["members"]) <= 2:
+                refined.append(cluster)
+                continue
+            subclusters = _cluster_candidates(cluster["members"], split_threshold)
+            if len(subclusters) == 1:
+                refined.append(cluster)
+            else:
+                refined.extend(subclusters)
+        clusters = refined
 
     letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     placements: List[TerminalPlacement] = []

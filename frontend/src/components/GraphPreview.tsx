@@ -1,5 +1,6 @@
 import { Box } from "@mui/material";
 import { SolveResponse } from "../api";
+import { TERMINAL_PALETTE, buildTerminalColorMaps } from "../colors";
 
 type GraphPreviewProps = {
   graph: SolveResponse["graph"];
@@ -13,38 +14,7 @@ export function GraphPreview({ graph, height = 140, nodeColor, showSolution = fa
     return null;
   }
 
-  const palette = [
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
-    "#9467bd",
-    "#8c564b",
-    "#e377c2",
-    "#7f7f7f",
-    "#bcbd22",
-    "#17becf"
-  ];
-
-  const terminalNodeColor: Record<string, string> = {};
-  const terminalColors = Object.keys(graph.terminals ?? {}).sort();
-  const colorToHex: Record<string, string> = {};
-  terminalColors.forEach((c, idx) => {
-    colorToHex[c] = palette[idx % palette.length];
-    const pair = graph.terminals[c];
-    if (pair && pair.length === 2) {
-      terminalNodeColor[pair[0]] = c;
-      terminalNodeColor[pair[1]] = c;
-    }
-  });
-  const solutionColors = nodeColor
-    ? Array.from(new Set(Object.values(nodeColor).filter((c): c is string => Boolean(c))))
-    : [];
-  if (solutionColors.length && terminalColors.length === 0) {
-    solutionColors.sort().forEach((c, idx) => {
-      colorToHex[c] = palette[idx % palette.length];
-    });
-  }
+  const { colorToHex, terminalNodeColor } = buildTerminalColorMaps(graph, nodeColor, TERMINAL_PALETTE);
 
   const xs = graph.nodes.map((n) => n.x);
   const ys = graph.nodes.map((n) => n.y);

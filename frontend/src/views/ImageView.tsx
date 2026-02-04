@@ -35,6 +35,8 @@ import {
   savePuzzle
 } from "../api";
 
+type TerminalPayload = { row: number; col: number; letter: string; color?: number[] };
+
 type ImageViewProps = {
   onGenerated: (name: string, text: string) => void;
   onSuggestedName?: (name: string) => void;
@@ -42,7 +44,7 @@ type ImageViewProps = {
     type: "square" | "hex" | "circle";
     rows: number;
     cols: number;
-    terminals: Array<{ row: number; col: number; letter: string }>;
+    terminals: TerminalPayload[];
     suggestedName?: string | null;
   }) => void;
   compact?: boolean;
@@ -209,8 +211,11 @@ export function ImageView({ onGenerated, onSuggestedName, onApplyGrid, compact =
         }
 
         if (terminalDetections.length) {
-          ctx.fillStyle = "rgba(255, 82, 82, 0.8)";
           terminalDetections.forEach((t) => {
+            const r = t.color[0] ?? 255;
+            const g = t.color[1] ?? 82;
+            const b = t.color[2] ?? 82;
+            ctx.fillStyle = `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, 0.85)`;
             const cx = (t.col + 0.5) * cellW;
             const cy = (t.row + 0.5) * cellH;
             ctx.beginPath();
@@ -348,7 +353,7 @@ export function ImageView({ onGenerated, onSuggestedName, onApplyGrid, compact =
           type: targetType === "graph" ? "square" : targetType,
           rows: res.grid.rows,
           cols: res.grid.cols,
-          terminals: terminalDetections.map((t) => ({ row: t.row, col: t.col, letter: t.letter })),
+          terminals: terminalDetections.map((t) => ({ row: t.row, col: t.col, letter: t.letter, color: t.color })),
           suggestedName: ocrSuggested
         });
       }
@@ -391,7 +396,7 @@ export function ImageView({ onGenerated, onSuggestedName, onApplyGrid, compact =
           type: targetType === "graph" ? "square" : targetType,
           rows,
           cols,
-          terminals: res.terminals.map((t) => ({ row: t.row, col: t.col, letter: t.letter })),
+          terminals: res.terminals.map((t) => ({ row: t.row, col: t.col, letter: t.letter, color: t.color })),
           suggestedName: ocrSuggested
         });
       }
@@ -449,7 +454,13 @@ export function ImageView({ onGenerated, onSuggestedName, onApplyGrid, compact =
       if (onApplyGrid && targetType !== "graph") {
         const rows = gridDetection?.rows ?? gridHeight;
         const cols = gridDetection?.cols ?? gridWidth;
-        const terminals = (res.detection?.terminals as Array<{ row: number; col: number; letter: string }> | undefined) ?? [];
+        const terminals =
+          (res.detection?.terminals as Array<TerminalPayload> | undefined)?.map((t) => ({
+            row: t.row,
+            col: t.col,
+            letter: t.letter,
+            color: t.color
+          })) ?? [];
         onApplyGrid({
           type: targetType,
           rows,
@@ -563,7 +574,7 @@ export function ImageView({ onGenerated, onSuggestedName, onApplyGrid, compact =
       }
       let rows = gridDetection?.rows ?? gridHeight;
       let cols = gridDetection?.cols ?? gridWidth;
-      let terminals: Array<{ row: number; col: number; letter: string }> = [];
+      let terminals: Array<TerminalPayload> = [];
       let suggestedName: string | null = ocrSuggested;
 
       if (pipelineUseOcr) {
@@ -628,7 +639,7 @@ export function ImageView({ onGenerated, onSuggestedName, onApplyGrid, compact =
           crop,
           perspective
         });
-        terminals = termRes.terminals.map((t) => ({ row: t.row, col: t.col, letter: t.letter }));
+        terminals = termRes.terminals.map((t) => ({ row: t.row, col: t.col, letter: t.letter, color: t.color }));
         setTerminalDetections(termRes.terminals);
         const warnings = termRes.info?.warnings?.length ? termRes.info.warnings.join(" ") : "No warnings.";
         setTerminalStatus(`Detected ${termRes.terminals.length} terminals. ${warnings}`);
@@ -703,7 +714,7 @@ export function ImageView({ onGenerated, onSuggestedName, onApplyGrid, compact =
     }
     const rows = gridDetection?.rows ?? gridHeight;
     const cols = gridDetection?.cols ?? gridWidth;
-    const terminals = terminalDetections.map((t) => ({ row: t.row, col: t.col, letter: t.letter }));
+    const terminals = terminalDetections.map((t) => ({ row: t.row, col: t.col, letter: t.letter, color: t.color }));
     onApplyGrid({
       type: targetType === "graph" ? "square" : targetType,
       rows,

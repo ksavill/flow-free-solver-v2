@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -6,6 +6,7 @@ import {
   Card,
   CardActionArea,
   CardContent,
+  CardActions,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -23,13 +24,10 @@ import {
   TextField,
   Typography
 } from "@mui/material";
-import { API_URL, deletePuzzle, getPuzzle, listPuzzles, PuzzleEntry, renamePuzzle } from "../api";
+import { deletePuzzle, getPuzzle, getPuzzleGraph, listPuzzles, PuzzleEntry, renamePuzzle, SolveResponse } from "../api";
+import { GameView } from "../components/GameView";
 
-const encodeRelPath = (path: string) =>
-  path
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+const entryKey = (entry: PuzzleEntry) => `${entry.source}:${entry.rel_path}:${entry.mtime ?? 0}`;
 
 type LibraryViewProps = {
   onLoadPuzzle: (name: string, text: string) => void;
@@ -49,6 +47,9 @@ export function LibraryView({ onLoadPuzzle }: LibraryViewProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [activeEntry, setActiveEntry] = useState<PuzzleEntry | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [graphCache, setGraphCache] = useState<Record<string, SolveResponse["graph"]>>({});
+  const [graphLoading, setGraphLoading] = useState<Record<string, boolean>>({});
+  const pendingRef = useRef<Record<string, boolean>>({});
 
   const fetchEntries = useCallback(async () => {
     try {
@@ -116,6 +117,33 @@ export function LibraryView({ onLoadPuzzle }: LibraryViewProps) {
     const start = (page - 1) * PAGE_SIZE;
     return filtered.slice(start, start + PAGE_SIZE);
   }, [filtered, page]);
+
+  useEffect(() => {
+    if (viewMode !== "grid" || loading) {
+      return;
+    }
+    pagedEntries.forEach((entry) => {
+      const key = entryKey(entry);
+      // Skip if already cached or pending
+      if (graphCache[key] || pendingRef.current[key]) {
+        return;
+      }
+      pendingRef.current[key] = true;
+      setGraphLoading((p) => ({ ...p, [key]: true }));
+      getPuzzleGraph(entry.source, entry.rel_path)
+        .then((res) => {
+          setGraphCache((c) => ({ ...c, [key]: res.graph }));
+        })
+        .catch(() => {
+          // Mark as failed by not caching; will show "Preview unavailable"
+        })
+        .finally(() => {
+          delete pendingRef.current[key];
+          setGraphLoading((p) => ({ ...p, [key]: false }));
+        });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, pagedEntries, viewMode]);
 
   const handleTypeChange = (event: SelectChangeEvent<string>) => {
     setTypeFilter(event.target.value);
@@ -308,7 +336,7 @@ export function LibraryView({ onLoadPuzzle }: LibraryViewProps) {
                 </TableHead>
                 <TableBody>
                   {pagedEntries.map((entry) => (
-                    <TableRow key={`${entry.source}-${entry.name}`}>
+                    <TableRow key={`row-${entryKey(entry)}`}>
                       <TableCell>
                         <Button variant="text" size="small" onClick={() => handleLoad(entry)}>
                           {entry.name}
@@ -370,52 +398,74 @@ export function LibraryView({ onLoadPuzzle }: LibraryViewProps) {
 
       {viewMode === "grid" && (
         <Box display="grid" gridTemplateColumns="repeat(auto-fit, minmax(240px, 1fr))" gap={2}>
-          {(loading ? [] : pagedEntries).map((entry) => (
-            <Card key={`thumb-${entry.source}-${entry.name}`}>
-              <CardActionArea onClick={() => handleLoad(entry)}>
-                <CardContent>
-                  <Box
-                    component="img"
-                    src={`${API_URL}/puzzles/${entry.source}/${encodeRelPath(entry.rel_path)}/thumbnail?v=v2-terminal-colors&ts=${entry.mtime ?? ""}`}
-                    alt={`${entry.name} thumbnail`}
-                    sx={{ width: "100%", borderRadius: 1, border: "1px solid rgba(255,255,255,0.1)" }}
-                  />
-                  <Box mt={1}>
-                    <Typography variant="subtitle2">{entry.name}</Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {entry.type_label} · {entry.size_label}
-                    </Typography>
-                    {entry.meta?.title && (
-                      <Typography variant="caption" color="text.secondary">
-                        {entry.meta.title}
-                      </Typography>
-                    )}
-                    {entry.source === "user" && (
-                      <Box mt={1} display="flex" gap={1}>
-                        <Button variant="outlined" size="small" onClick={(event) => {
-                          event.stopPropagation();
-                          openRename(entry);
-                        }}>
-                          Rename
-                        </Button>
-                        <Button
-                          variant="outlined"
-                          color="error"
-                          size="small"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openDelete(entry);
+          {(loading ? [] : pagedEntries).map((entry) => {
+            const key = entryKey(entry);
+            const graph = graphCache[key];
+            const isLoading = graphLoading[key];
+            return (
+              <Card key={`thumb-${key}`}>
+                <CardActionArea onClick={() => handleLoad(entry)}>
+                  <CardContent>
+                    <Box
+                      sx={{
+                        width: "100%",
+                        minHeight: 160,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}
+                    >
+                      {graph ? (
+                        <GameView graph={graph} compact />
+                      ) : (
+                        <Box
+                          sx={{
+                            width: "100%",
+                            height: 160,
+                            borderRadius: 1,
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            backgroundColor: "rgba(10,10,16,0.6)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center"
                           }}
                         >
-                          Delete
-                        </Button>
-                      </Box>
-                    )}
-                  </Box>
-                </CardContent>
-              </CardActionArea>
-            </Card>
-          ))}
+                          {isLoading ? (
+                            <CircularProgress size={24} />
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">
+                              Preview unavailable
+                            </Typography>
+                          )}
+                        </Box>
+                      )}
+                    </Box>
+                    <Box mt={1}>
+                      <Typography variant="subtitle2">{entry.name}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {entry.type_label} · {entry.size_label}
+                      </Typography>
+                      {entry.meta?.title && (
+                        <Typography variant="caption" color="text.secondary">
+                          {entry.meta.title}
+                        </Typography>
+                      )}
+                    </Box>
+                  </CardContent>
+                </CardActionArea>
+                {entry.source === "user" && (
+                  <CardActions sx={{ px: 2, pb: 2 }}>
+                    <Button variant="outlined" size="small" onClick={() => openRename(entry)}>
+                      Rename
+                    </Button>
+                    <Button variant="outlined" color="error" size="small" onClick={() => openDelete(entry)}>
+                      Delete
+                    </Button>
+                  </CardActions>
+                )}
+              </Card>
+            );
+          })}
           {!loading && !pagedEntries.length && (
             <Card>
               <CardContent>

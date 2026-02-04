@@ -1,6 +1,7 @@
 import { Box } from "@mui/material";
 import { useMemo } from "react";
 import { SolveResponse } from "../api";
+import { GAME_PALETTE, buildTerminalColorMaps } from "../colors";
 
 type GameViewProps = {
   graph: SolveResponse["graph"];
@@ -10,35 +11,6 @@ type GameViewProps = {
   cellSize?: number;
   compact?: boolean;
 };
-
-const PALETTE = [
-  "#1f77b4", // blue
-  "#ff7f0e", // orange
-  "#2ca02c", // green
-  "#d62728", // red
-  "#9467bd", // purple
-  "#8c564b", // brown
-  "#e377c2", // pink
-  "#7f7f7f", // gray
-  "#bcbd22", // olive
-  "#17becf", // cyan
-];
-
-// Brighter colors for game view (closer to Flow Free)
-const GAME_PALETTE = [
-  "#2196F3", // blue
-  "#FF9800", // orange
-  "#4CAF50", // green
-  "#F44336", // red
-  "#9C27B0", // purple
-  "#795548", // brown
-  "#E91E63", // pink
-  "#9E9E9E", // gray
-  "#CDDC39", // lime
-  "#00BCD4", // cyan
-  "#FFEB3B", // yellow
-  "#FF5722", // deep orange
-];
 
 type CellData = {
   x: number;
@@ -64,34 +36,10 @@ export function GameView({
   compact = false,
 }: GameViewProps) {
   // Build color mapping from terminal colors
-  const { colorToHex, terminalNodeColor } = useMemo(() => {
-    const terminalNodeColor: Record<string, string> = {};
-    const terminalColors = Object.keys(graph.terminals ?? {}).sort();
-    const colorToHex: Record<string, string> = {};
-
-    terminalColors.forEach((c, idx) => {
-      colorToHex[c] = GAME_PALETTE[idx % GAME_PALETTE.length];
-      const pair = graph.terminals[c];
-      if (pair && pair.length === 2) {
-        terminalNodeColor[pair[0]] = c;
-        terminalNodeColor[pair[1]] = c;
-      }
-    });
-
-    // Also map solution colors if present
-    if (nodeColor) {
-      const solutionColors = Array.from(
-        new Set(Object.values(nodeColor).filter((c): c is string => Boolean(c)))
-      );
-      if (solutionColors.length && terminalColors.length === 0) {
-        solutionColors.sort().forEach((c, idx) => {
-          colorToHex[c] = GAME_PALETTE[idx % GAME_PALETTE.length];
-        });
-      }
-    }
-
-    return { colorToHex, terminalNodeColor };
-  }, [graph.terminals, nodeColor]);
+  const { colorToHex, terminalNodeColor } = useMemo(
+    () => buildTerminalColorMaps(graph, nodeColor, GAME_PALETTE),
+    [graph, nodeColor]
+  );
 
   // Parse grid dimensions and build cell data
   const { cells, gridWidth, gridHeight, minX, minY } = useMemo(() => {

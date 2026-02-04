@@ -15,24 +15,12 @@ import {
   Typography
 } from "@mui/material";
 import { listPuzzles, savePuzzle } from "../api";
+import { TERMINAL_PALETTE } from "../colors";
 import { ImageView } from "./ImageView";
 
 type NewPuzzleViewProps = {
   onCreatePuzzle: (name: string, text: string) => void;
 };
-
-const PALETTE = [
-  "#1f77b4",
-  "#ff7f0e",
-  "#2ca02c",
-  "#d62728",
-  "#9467bd",
-  "#8c564b",
-  "#e377c2",
-  "#7f7f7f",
-  "#bcbd22",
-  "#17becf"
-];
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const LEVEL_PREFIX = "classic_level_";
@@ -41,9 +29,48 @@ function buildGrid(rows: number, cols: number) {
   return Array.from({ length: rows }, () => Array.from({ length: cols }, () => "."));
 }
 
-function letterColor(letter: string) {
+type TerminalPayload = { row: number; col: number; letter: string; color?: number[] };
+
+function clampByte(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function rgbToHex(r: number, g: number, b: number) {
+  const toHex = (value: number) => clampByte(value).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function buildDetectedColorMap(terminals: TerminalPayload[]) {
+  const sums: Record<string, { r: number; g: number; b: number; count: number }> = {};
+  terminals.forEach((terminal) => {
+    if (!terminal.color || terminal.color.length < 3) {
+      return;
+    }
+    const [r, g, b] = terminal.color;
+    const entry = sums[terminal.letter] ?? { r: 0, g: 0, b: 0, count: 0 };
+    entry.r += r;
+    entry.g += g;
+    entry.b += b;
+    entry.count += 1;
+    sums[terminal.letter] = entry;
+  });
+
+  const out: Record<string, string> = {};
+  Object.entries(sums).forEach(([letter, entry]) => {
+    if (entry.count > 0) {
+      out[letter] = rgbToHex(entry.r / entry.count, entry.g / entry.count, entry.b / entry.count);
+    }
+  });
+  return out;
+}
+
+function letterColor(letter: string, overrides?: Record<string, string>) {
+  const override = overrides?.[letter];
+  if (override) {
+    return override;
+  }
   const idx = letter.charCodeAt(0) - 65;
-  return PALETTE[idx % PALETTE.length];
+  return TERMINAL_PALETTE[idx % TERMINAL_PALETTE.length];
 }
 
 function buildFlowText(boardType: string, grid: string[][], meta?: Record<string, string>) {
@@ -65,6 +92,7 @@ export function NewPuzzleView({ onCreatePuzzle }: NewPuzzleViewProps) {
   const [rows, setRows] = useState(5);
   const [grid, setGrid] = useState<string[][]>(() => buildGrid(5, 5));
   const [selectedColor, setSelectedColor] = useState<string | null>("A");
+  const [detectedColors, setDetectedColors] = useState<Record<string, string>>({});
   const [name, setName] = useState(`${LEVEL_PREFIX}1.flow`);
   const [autoName, setAutoName] = useState(true);
   const [levelNumber, setLevelNumber] = useState(1);
@@ -160,7 +188,7 @@ export function NewPuzzleView({ onCreatePuzzle }: NewPuzzleViewProps) {
     type: "square" | "hex" | "circle";
     rows: number;
     cols: number;
-    terminals: Array<{ row: number; col: number; letter: string }>;
+    terminals: TerminalPayload[];
     suggestedName?: string | null;
   }) => {
     suppressAutoResetRef.current = true;
@@ -174,6 +202,10 @@ export function NewPuzzleView({ onCreatePuzzle }: NewPuzzleViewProps) {
       }
     });
     setGrid(next);
+    const detectedColorMap = buildDetectedColorMap(payload.terminals);
+    if (Object.keys(detectedColorMap).length > 0) {
+      setDetectedColors(detectedColorMap);
+    }
     if (payload.suggestedName) {
       setName(payload.suggestedName);
       setAutoName(false);
@@ -258,16 +290,17 @@ export function NewPuzzleView({ onCreatePuzzle }: NewPuzzleViewProps) {
                     >
                       No color
                     </Button>
-                    {LETTERS.slice(0, 10).map((letter) => (
+                    {LETTERS.map((letter) => (
                       <Button
                         key={letter}
                         variant={selectedColor === letter ? "contained" : "outlined"}
                         size="small"
                         onClick={() => setSelectedColor(letter)}
                         sx={{
-                          borderColor: letterColor(letter),
-                          color: selectedColor === letter ? "#0f1116" : letterColor(letter),
-                          backgroundColor: selectedColor === letter ? letterColor(letter) : "transparent"
+                          borderColor: letterColor(letter, detectedColors),
+                          color: selectedColor === letter ? "#0f1116" : letterColor(letter, detectedColors),
+                          backgroundColor:
+                            selectedColor === letter ? letterColor(letter, detectedColors) : "transparent"
                         }}
                       >
                         {letter} ({counts[letter]})
@@ -284,7 +317,7 @@ export function NewPuzzleView({ onCreatePuzzle }: NewPuzzleViewProps) {
                   {grid.map((row, r) =>
                     row.map((cell, c) => {
                       const active = cell !== ".";
-                      const bg = active ? letterColor(cell) : "rgba(255,255,255,0.06)";
+                      const bg = active ? letterColor(cell, detectedColors) : "rgba(255,255,255,0.06)";
                       const color = active ? "#0f1116" : "rgba(255,255,255,0.5)";
                       return (
                         <Box
